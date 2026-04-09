@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feed the Children – 990 Financial Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f4f6f9;
+      color: #1a1a2e;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: white;
+      padding: 32px 40px;
+    }
+    header h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.5px; }
+    header p  { margin-top: 6px; color: #a0aec0; font-size: 0.9rem; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 32px 24px; }
+
+    /* ── KPI Cards ── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .kpi-card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      border-left: 4px solid var(--accent, #4f46e5);
+    }
+    .kpi-card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .8px; color: #718096; }
+    .kpi-card .value { font-size: 1.55rem; font-weight: 700; margin-top: 6px; color: #1a1a2e; }
+    .kpi-card .trend { font-size: 0.78rem; margin-top: 4px; }
+    .trend.pos { color: #38a169; }
+    .trend.neg { color: #e53e3e; }
+
+    /* ── Charts ── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 800px) { .charts-grid { grid-template-columns: 1fr; } }
+
+    .chart-card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .chart-card.wide { grid-column: 1 / -1; }
+    .chart-card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: #2d3748; }
+    .chart-wrap { position: relative; height: 280px; }
+
+    footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 0.78rem;
+      color: #a0aec0;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Feed the Children, Inc.</h1>
+  <p>IRS Form 990 Financial Summary &nbsp;·&nbsp; Fiscal Years Ending June 2021 – June 2024 &nbsp;·&nbsp; EIN 73-6108804</p>
+</header>
+
+<div class="container">
+
+  <!-- KPI Cards (most recent FY) -->
+  <div class="kpi-grid" id="kpi-grid"></div>
+
+  <!-- Charts -->
+  <div class="charts-grid">
+
+    <div class="chart-card wide">
+      <h2>Revenue vs. Expenses Over Time</h2>
+      <div class="chart-wrap"><canvas id="revExpChart"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <h2>Expense Breakdown — Most Recent Year (FY Jun 2024)</h2>
+      <div class="chart-wrap"><canvas id="expBreakChart"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <h2>Balance Sheet Trends</h2>
+      <div class="chart-wrap"><canvas id="balanceChart"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <h2>Contributions: Cash vs. Noncash</h2>
+      <div class="chart-wrap"><canvas id="contribChart"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+      <h2>Net Income (Revenue − Expenses)</h2>
+      <div class="chart-wrap"><canvas id="netChart"></canvas></div>
+    </div>
+
+  </div>
+</div>
+
+<footer>Source: IRS Form 990 e-filings via AWS Open Data Registry &nbsp;·&nbsp; Data reflects annual 990 submissions</footer>
+
+<script>
+// ── Data ──────────────────────────────────────────────────────────────────
+const years = ["Jun 2021", "Jun 2022", "Jun 2023", "Jun 2024"];
+
+const data = {
+  totalRevenue:    [598942560, 387738661, 502018838, 408871015],
+  totalExpenses:   [538811644, 403112973, 493477526, 429369794],
+  contributions:   [582226099, 386959619, 496797900, 407771177],
+  noncashContribs: [530086163, 336779133, 445987785, 352487665],
+  grantsPaid:      [499355440, 360262992, 449757849, 378312454],
+  salaries:        [16402728,  16647557,  18373863,  20277910],
+  fundraising:     [14308300,  17144929,  15494997,  21297029],
+  otherExpenses:   [20712663,  22881842,  22630756,  27541398],
+  netIncome:       [60130916,  -15374312, 8541312,   -20498779],
+  totalAssets:     [213383334, 180883082, 189185892, 172836726],
+  totalLiab:       [6742090,   6402256,   3915830,   4894644],
+  netAssets:       [206641244, 174480826, 185270062, 167942082],
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+const fmt  = v => "$" + (Math.abs(v) >= 1e9 ? (v/1e9).toFixed(2)+"B"
+                       : Math.abs(v) >= 1e6 ? (v/1e6).toFixed(1)+"M"
+                       : Math.abs(v) >= 1e3 ? (v/1e3).toFixed(0)+"K"
+                       : v.toLocaleString());
+
+const pct  = (a, b) => b === 0 ? "—" : ((a - b) / Math.abs(b) * 100).toFixed(1) + "%";
+
+const COLORS = {
+  blue:   "#4f46e5",
+  red:    "#e53e3e",
+  green:  "#38a169",
+  teal:   "#2b9996",
+  orange: "#dd6b20",
+  purple: "#805ad5",
+  gray:   "#718096",
+};
+
+const last = arr => arr[arr.length - 1];
+const prev = arr => arr[arr.length - 2];
+
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+Chart.defaults.font.size   = 12;
+
+// ── KPI Cards ─────────────────────────────────────────────────────────────
+const kpis = [
+  { label: "Total Revenue",  value: last(data.totalRevenue),  prev: prev(data.totalRevenue),  accent: COLORS.blue },
+  { label: "Total Expenses", value: last(data.totalExpenses), prev: prev(data.totalExpenses), accent: COLORS.red },
+  { label: "Net Income",     value: last(data.netIncome),     prev: prev(data.netIncome),     accent: COLORS.green },
+  { label: "Contributions",  value: last(data.contributions), prev: prev(data.contributions), accent: COLORS.teal },
+  { label: "Total Assets",   value: last(data.totalAssets),   prev: prev(data.totalAssets),   accent: COLORS.purple },
+  { label: "Net Assets",     value: last(data.netAssets),     prev: prev(data.netAssets),     accent: COLORS.orange },
+];
+
+const grid = document.getElementById("kpi-grid");
+kpis.forEach(k => {
+  const change = k.value - k.prev;
+  const pos    = change >= 0;
+  grid.innerHTML += `
+    <div class="kpi-card" style="--accent:${k.accent}">
+      <div class="label">${k.label}</div>
+      <div class="value">${fmt(k.value)}</div>
+      <div class="trend ${pos ? 'pos' : 'neg'}">
+        ${pos ? "▲" : "▼"} ${fmt(Math.abs(change))} vs prior year
+      </div>
+    </div>`;
+});
+
+// ── Chart defaults ────────────────────────────────────────────────────────
+const tickFmt = v => fmt(v);
+
+// 1. Revenue vs Expenses
+new Chart(document.getElementById("revExpChart"), {
+  type: "bar",
+  data: {
+    labels: years,
+    datasets: [
+      { label: "Total Revenue",  data: data.totalRevenue,  backgroundColor: COLORS.blue + "cc" },
+      { label: "Total Expenses", data: data.totalExpenses, backgroundColor: COLORS.red  + "cc" },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: "top" } },
+    scales: {
+      y: { ticks: { callback: tickFmt }, grid: { color: "#f0f0f0" } }
+    }
+  }
+});
+
+// 2. Expense Breakdown (most recent)
+new Chart(document.getElementById("expBreakChart"), {
+  type: "doughnut",
+  data: {
+    labels: ["Grants Paid", "Salaries & Benefits", "Fundraising", "Other Expenses"],
+    datasets: [{
+      data: [
+        last(data.grantsPaid),
+        last(data.salaries),
+        last(data.fundraising),
+        last(data.otherExpenses),
+      ],
+      backgroundColor: [COLORS.blue, COLORS.teal, COLORS.orange, COLORS.gray],
+      borderWidth: 2,
+      borderColor: "#fff"
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { position: "right" },
+      tooltip: {
+        callbacks: {
+          label: ctx => ` ${ctx.label}: ${fmt(ctx.parsed)} (${(ctx.parsed / last(data.totalExpenses) * 100).toFixed(1)}%)`
+        }
+      }
+    }
+  }
+});
+
+// 3. Balance Sheet
+new Chart(document.getElementById("balanceChart"), {
+  type: "line",
+  data: {
+    labels: years,
+    datasets: [
+      { label: "Total Assets",      data: data.totalAssets, borderColor: COLORS.blue,   backgroundColor: COLORS.blue   + "22", fill: true, tension: 0.3 },
+      { label: "Total Liabilities", data: data.totalLiab,   borderColor: COLORS.red,    backgroundColor: COLORS.red    + "22", fill: true, tension: 0.3 },
+      { label: "Net Assets",        data: data.netAssets,   borderColor: COLORS.green,  backgroundColor: COLORS.green  + "22", fill: true, tension: 0.3 },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: "top" } },
+    scales: { y: { ticks: { callback: tickFmt }, grid: { color: "#f0f0f0" } } }
+  }
+});
+
+// 4. Contributions: Cash vs Noncash
+new Chart(document.getElementById("contribChart"), {
+  type: "bar",
+  data: {
+    labels: years,
+    datasets: [
+      {
+        label: "Cash Contributions",
+        data: data.contributions.map((c, i) => c - data.noncashContribs[i]),
+        backgroundColor: COLORS.teal + "cc",
+        stack: "contrib"
+      },
+      {
+        label: "Noncash Contributions",
+        data: data.noncashContribs,
+        backgroundColor: COLORS.orange + "cc",
+        stack: "contrib"
+      },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: "top" } },
+    scales: {
+      x: { stacked: true },
+      y: { stacked: true, ticks: { callback: tickFmt }, grid: { color: "#f0f0f0" } }
+    }
+  }
+});
+
+// 5. Net Income
+new Chart(document.getElementById("netChart"), {
+  type: "bar",
+  data: {
+    labels: years,
+    datasets: [{
+      label: "Net Income",
+      data: data.netIncome,
+      backgroundColor: data.netIncome.map(v => v >= 0 ? COLORS.green + "cc" : COLORS.red + "cc"),
+      borderColor:     data.netIncome.map(v => v >= 0 ? COLORS.green : COLORS.red),
+      borderWidth: 1,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { ticks: { callback: tickFmt }, grid: { color: "#f0f0f0" } } }
+  }
+});
+</script>
+</body>
+</html>
